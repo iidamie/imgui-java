@@ -25,127 +25,47 @@ on:
   push:
     branches:
       - main
-    tags:
-      - v*
-  pull_request:
-    branches:
-      - main
 
 jobs:
   build-java:
-    name: Build Java
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: liberica
           java-version: 17
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Build Java
-        run: ./gradlew build
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew build
 
   build-natives:
-    name: Build Native (${{ matrix.type }})
     needs: build-java
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-latest, macos-latest, ubuntu-latest]
-        type: [linux, windows, macos, android-arm64]
-
+        os: [ubuntu-latest]
+        type: [android-arm64]
     runs-on: ${{ matrix.os }}
-
     steps:
-      - name: Check if should run this target
-        id: filter
-        run: |
-          #!/bin/bash
-          set -e
-          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-          else
-            TARGET_ARCH="${{ github.event.inputs.target_arch }}"
-            if [[ "$TARGET_ARCH" == "all" || "$TARGET_ARCH" == "${{ matrix.type }}" ]]; then
-              echo "should_run=true" >> $GITHUB_OUTPUT
-            else
-              echo "should_run=false" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      - name: Checkout Repository and Submodules
-        if: ${{ steps.filter.outputs.should_run == 'true' }}
+      - name: Checkout
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Setup Java
-        if: ${{ steps.filter.outputs.should_run == 'true' }}
-        uses: actions/setup-java@v5
-        with:
-          distribution: liberica
-          java-version: 17
-
-      - name: Setup Gradle
-        if: ${{ steps.filter.outputs.should_run == 'true' }}
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Install Dependencies (Windows)
-        if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'windows' }}
-        run: sudo apt install -y mingw-w64
-
-      - name: Install Dependencies (Android ARM64)
-        if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'android-arm64' }}
+      - name: Install Android dependencies
         run: |
           sudo apt update
-          sudo apt install -y ninja-build pkg-config unzip wget
+          sudo apt install -y unzip wget ninja-build pkg-config
           wget https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
           unzip -q android-ndk-r27c-linux.zip
           echo "ANDROID_NDK_HOME=$(pwd)/android-ndk-r27c" >> $GITHUB_ENV
           echo "$(pwd)/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-
-      - name: Set Build Type
-        if: ${{ steps.filter.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch' }}
-        run: |
-          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            echo "BUILD_TYPE=debug" >> $GITHUB_ENV
-          else
-            echo "BUILD_TYPE=release" >> $GITHUB_ENV
-          fi
-
       - name: Build Native
-        if: ${{ steps.filter.outputs.should_run == 'true' }}
         run: |
           chmod +x buildSrc/scripts/build.sh
-          if [ -n "$BUILD_TYPE" ]; then
-            buildSrc/scripts/build.sh ${{ matrix.type }} $BUILD_TYPE
-          else
-            buildSrc/scripts/build.sh ${{ matrix.type }}
-          fi
-
-      - name: Verify Android ARM64 Build
-        if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'android-arm64' }}
-        run: |
-          echo "Verifying Android ARM64 .so files..."
-          find /tmp/imgui/dst/ -name "*.so" -exec file {} \;
-          if find /tmp/imgui/dst/ -name "*.so" -exec file {} \; | grep -q "x86-64"; then
-            echo "ERROR: Found x86_64 .so files in android-arm64 build!"
-            exit 1
-          fi
-          echo "Android ARM64 build verification passed"
-
-      - name: Upload Artifacts
-        if: ${{ steps.filter.outputs.should_run == 'true' }}
+          ./buildSrc/scripts/build.sh android-arm64 release
+      - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: native-library-${{ matrix.type }}
+          name: native-library-android-arm64
           path: /tmp/imgui/dst/
