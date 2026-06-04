@@ -33,74 +33,85 @@ on:
 
 jobs:
   build-java:
-    # ... 保持不变 ...
-
-  build-natives:
-    name: Build Native (${{ matrix.target.os }} - ${{ matrix.target.type }})
-    needs: build-java
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - os: ubuntu-latest
-            type: linux
-          - os: ubuntu-latest
-            type: windows
-          - os: macos-latest
-            type: macos
-          - os: ubuntu-latest
-            type: android-arm64
-    # 移除原来的 if 条件，让所有 job 都启动
-    runs-on: ${{ matrix.target.os }}
+    name: Build Java
+    runs-on: ubuntu-latest
     steps:
-      - name: Check if should run this target
-        id: filter
-        run: |
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-          else
-            TARGET_ARCH="${{ github.event.inputs.target_arch }}"
-            if [[ "$TARGET_ARCH" == "all" || "$TARGET_ARCH" == "${{ matrix.target.type }}" ]]; then
-              echo "should_run=true" >> $GITHUB_OUTPUT
-            else
-              echo "should_run=false" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      - name: Checkout Repository and Submodules
-        if: steps.filter.outputs.should_run == 'true'
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Setup Java
-        if: steps.filter.outputs.should_run == 'true'
         uses: actions/setup-java@v5
         with:
           distribution: liberica
           java-version: 17
 
       - name: Setup Gradle
-        if: steps.filter.outputs.should_run == 'true'
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Install Dependencies (for Windows build)
-        if: steps.filter.outputs.should_run == 'true' && matrix.target.type == 'windows'
+      - name: Build Java
+        run: ./gradlew build
+
+  build-natives:
+    name: Build Native (${{ matrix.type }})
+    needs: build-java
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-latest, macos-latest, ubuntu-latest]
+        type: [linux, windows, macos, android-arm64]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check if should run this target
+        id: filter
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            TARGET_ARCH="${{ github.event.inputs.target_arch }}"
+            if [[ "$TARGET_ARCH" == "all" || "$TARGET_ARCH" == "${{ matrix.type }}" ]]; then
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            else
+              echo "should_run=false" >> $GITHUB_OUTPUT
+            fi
+
+      - name: Checkout Repository and Submodules
+        if: ${{ steps.filter.outputs.should_run == 'true' }}
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup Java
+        if: ${{ steps.filter.outputs.should_run == 'true' }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: liberica
+          java-version: 17
+
+      - name: Setup Gradle
+        if: ${{ steps.filter.outputs.should_run == 'true' }}
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Dependencies (Windows)
+        if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'windows' }}
         run: sudo apt install mingw-w64
 
-      - name: Install Dependencies (for Android ARM64 build)
-        if: steps.filter.outputs.should_run == 'true' && matrix.target.type == 'android-arm64'
+      - name: Install Dependencies (Android ARM64)
+        if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'android-arm64' }}
         run: |
           sudo apt update
-          sudo apt install -y ninja-build pkg-config
+          sudo apt install -y ninja-build pkg-config unzip wget
           wget https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
           unzip -q android-ndk-r27c-linux.zip
           echo "ANDROID_NDK_HOME=$(pwd)/android-ndk-r27c" >> $GITHUB_ENV
           echo "$(pwd)/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Set Build Type
-        if: steps.filter.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch'
+        if: ${{ steps.filter.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch' }}
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             echo "BUILD_TYPE=debug" >> $GITHUB_ENV
@@ -108,18 +119,18 @@ jobs:
             echo "BUILD_TYPE=release" >> $GITHUB_ENV
           fi
 
-      - name: Build
-        if: steps.filter.outputs.should_run == 'true'
+      - name: Build Native
+        if: ${{ steps.filter.outputs.should_run == 'true' }}
         run: |
           chmod +x buildSrc/scripts/build.sh
           if [ -n "$BUILD_TYPE" ]; then
-            buildSrc/scripts/build.sh ${{ matrix.target.type }} $BUILD_TYPE
+            buildSrc/scripts/build.sh ${{ matrix.type }} $BUILD_TYPE
           else
-            buildSrc/scripts/build.sh ${{ matrix.target.type }}
+            buildSrc/scripts/build.sh ${{ matrix.type }}
           fi
 
       - name: Verify Android ARM64 Build
-        if: steps.filter.outputs.should_run == 'true' && matrix.target.type == 'android-arm64'
+        if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'android-arm64' }}
         run: |
           find /tmp/imgui/dst/ -name "*.so" -exec file {} \;
           if find /tmp/imgui/dst/ -name "*.so" -exec file {} \; | grep -q "x86-64"; then
@@ -129,11 +140,8 @@ jobs:
           echo "Android ARM64 build verification passed"
 
       - name: Upload Artifacts
-        if: steps.filter.outputs.should_run == 'true'
+        if: ${{ steps.filter.outputs.should_run == 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: native-library-${{ matrix.target.type }}
+          name: native-library-${{ matrix.type }}
           path: /tmp/imgui/dst/
-
-  # 其他 jobs (archive-natives, package-android, update-bin, release) 基本保持不变
-  # 但在 archive-natives 中需要调整模式匹配，因为 artifact 名称不变
