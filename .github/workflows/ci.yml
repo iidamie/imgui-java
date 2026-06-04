@@ -68,6 +68,8 @@ jobs:
       - name: Check if should run this target
         id: filter
         run: |
+          #!/bin/bash
+          set -e
           if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
           else
@@ -77,6 +79,7 @@ jobs:
             else
               echo "should_run=false" >> $GITHUB_OUTPUT
             fi
+          fi
 
       - name: Checkout Repository and Submodules
         if: ${{ steps.filter.outputs.should_run == 'true' }}
@@ -98,7 +101,7 @@ jobs:
 
       - name: Install Dependencies (Windows)
         if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'windows' }}
-        run: sudo apt install mingw-w64
+        run: sudo apt install -y mingw-w64
 
       - name: Install Dependencies (Android ARM64)
         if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'android-arm64' }}
@@ -132,6 +135,7 @@ jobs:
       - name: Verify Android ARM64 Build
         if: ${{ steps.filter.outputs.should_run == 'true' && matrix.type == 'android-arm64' }}
         run: |
+          echo "Verifying Android ARM64 .so files..."
           find /tmp/imgui/dst/ -name "*.so" -exec file {} \;
           if find /tmp/imgui/dst/ -name "*.so" -exec file {} \; | grep -q "x86-64"; then
             echo "ERROR: Found x86_64 .so files in android-arm64 build!"
